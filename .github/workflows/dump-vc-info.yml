@@ -1,0 +1,60 @@
+name: Dump Vice City SDK info
+
+# Run this by hand from the Actions tab. It builds nothing; it only copies
+# some plugin-sdk Vice City header files into one text file you can download.
+on:
+  workflow_dispatch:
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download plugin-sdk
+        run: git clone --depth 1 https://github.com/DK22Pac/plugin-sdk.git plugin-sdk
+
+      - name: Collect the files into vc-sdk-info.txt
+        shell: bash
+        run: |
+          cd plugin-sdk
+          out="$GITHUB_WORKSPACE/vc-sdk-info.txt"
+          : > "$out"
+
+          show() {
+            echo "" >> "$out"
+            echo "===== $1 (first ${2:-400} lines) =====" >> "$out"
+            if [ -f "$1" ]; then head -n "${2:-400}" "$1" >> "$out"; else echo "(file not found)" >> "$out"; fi
+          }
+
+          # The Vice City classes that matter for HUD icons and texture dictionaries
+          for f in CHud.h CHud.cpp CSprite2d.h CSprite2d.cpp CTxdStore.h CTxdStore.cpp \
+                   CWeaponInfo.h CWeaponModelInfo.h CBaseModelInfo.h CModelInfo.h CStreaming.h; do
+            show "plugin_vc/game_vc/$f" 500
+          done
+
+          echo "" >> "$out"; echo "===== file list: plugin_vc/game_vc =====" >> "$out"
+          ls plugin_vc/game_vc >> "$out" 2>&1
+          echo "" >> "$out"; echo "===== file list: plugin_vc/game_vc/rw =====" >> "$out"
+          ls plugin_vc/game_vc/rw >> "$out" 2>&1
+          echo "" >> "$out"; echo "===== file list: shared =====" >> "$out"
+          ls shared >> "$out" 2>&1
+
+          echo "" >> "$out"; echo "===== where the texture-lookup functions are declared =====" >> "$out"
+          grep -rn "RwTexDictionaryFindNamedTexture\|RwTexDictionaryFindHashNamedTexture" plugin_vc shared 2>/dev/null | head -40 >> "$out"
+
+          echo "" >> "$out"; echo "===== plugin events (init/draw/process) =====" >> "$out"
+          grep -rn "initScriptsEvent\|initRwEvent\|initGameEvent\|drawHudEvent\|drawingEvent\|gameProcessEvent" shared plugin_vc 2>/dev/null | head -40 >> "$out"
+
+          echo "" >> "$out"; echo "===== patch helpers =====" >> "$out"
+          grep -rn "RedirectCall\|RedirectJump\|gaddrof" shared/Patch.h shared/DynAddress.h 2>/dev/null | head -40 >> "$out"
+
+          echo "" >> "$out"; echo "===== every Vice City header that mentions weapon icons or hud.txd =====" >> "$out"
+          grep -rniE "weapon.?icon|hud\.txd|HUDSPRITE|fist" plugin_vc 2>/dev/null | head -60 >> "$out"
+
+          wc -c "$out"
+
+      - name: Save the text file so you can download it
+        uses: actions/upload-artifact@v4
+        with:
+          name: vc-sdk-info
+          path: vc-sdk-info.txt
+          if-no-files-found: error
