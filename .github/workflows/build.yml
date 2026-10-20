@@ -21,27 +21,86 @@ jobs:
 
     env:
       PLUGIN_SDK_DIR: ${{ github.workspace }}\plugin-sdk
+      # plugin-sdk looks for these folders; empty dummy folders are enough for building.
+      GTA_SA_DIR: ${{ github.workspace }}\dummy\sa
+      GTA_VC_DIR: ${{ github.workspace }}\dummy\vc
+      GTA_III_DIR: ${{ github.workspace }}\dummy\iii
 
     steps:
       - name: Get your project files
         uses: actions/checkout@v4
 
       - name: Download plugin-sdk
-        run: git clone --depth 1 https://github.com/DK22Pac/plugin-sdk.git plugin-sdk
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/DK22Pac/plugin-sdk.git plugin-sdk
+          New-Item -ItemType Directory -Force dummy\sa, dummy\vc, dummy\iii | Out-Null
+
+      - name: Show what is inside plugin-sdk tools (for troubleshooting)
+        shell: pwsh
+        run: |
+          Get-ChildItem plugin-sdk\tools -Recurse -Depth 3 -ErrorAction SilentlyContinue |
+            Select-Object -First 80 | ForEach-Object { Write-Host $_.FullName }
 
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Generate the plugin-sdk project files with premake
+        shell: pwsh
+        run: |
+          $sdk = "$env:GITHUB_WORKSPACE\plugin-sdk"
+
+          # 1. Find premake (use plugin-sdk's own copy if it has one, otherwise download it)
+          $pm = Get-ChildItem $sdk -Recurse -Filter premake5.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($pm) {
+            $premake = $pm.FullName
+            Write-Host "Using premake from plugin-sdk: $premake"
+          } else {
+            Write-Host "plugin-sdk has no premake5.exe, downloading one"
+            Invoke-WebRequest "https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-windows.zip" -OutFile "$env:RUNNER_TEMP\premake.zip"
+            Expand-Archive "$env:RUNNER_TEMP\premake.zip" -DestinationPath "$env:RUNNER_TEMP\premake" -Force
+            $premake = "$env:RUNNER_TEMP\premake\premake5.exe"
+          }
+
+          # 2. Find the premake script (the shortest path wins)
+          $lua = Get-ChildItem $sdk -Recurse -Filter premake5.lua -ErrorAction SilentlyContinue |
+                 Sort-Object { $_.FullName.Length } | Select-Object -First 1
+          if (-not $lua) { throw "No premake5.lua found inside plugin-sdk. See the 'Show what is inside' step above." }
+          Write-Host "Using premake script: $($lua.FullName)"
+
+          # 3. Generate Visual Studio 2022 projects
+          Push-Location $lua.DirectoryName
+          & $premake vs2022
+          $code = $LASTEXITCODE
+          Pop-Location
+          if ($code -ne 0) { throw "premake failed with exit code $code" }
+
+          Write-Host "Project files that now exist:"
+          Get-ChildItem $sdk -Recurse -Include *.sln, *.vcxproj | ForEach-Object { Write-Host $_.FullName }
+
       - name: Build the plugin-sdk library (plugin.lib / plugin_vc.lib)
         shell: pwsh
         run: |
-          $proj = Get-ChildItem -Path plugin-sdk -Recurse -Filter "${{ matrix.sdkproject }}.vcxproj" | Select-Object -First 1
-          if (-not $proj) { throw "Could not find ${{ matrix.sdkproject }}.vcxproj inside plugin-sdk" }
-          Write-Host "Building $($proj.FullName)"
-          msbuild $proj.FullName /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /m
+          $sdk = "$env:GITHUB_WORKSPACE\plugin-sdk"
+          $vcx = Get-ChildItem $sdk -Recurse -Filter "${{ matrix.sdkproject }}.vcxproj" | Select-Object -First 1
+          if (-not $vcx) { throw "Could not find ${{ matrix.sdkproject }}.vcxproj after generating. See the list in the previous step." }
+
+          # Read which build configurations the generated project offers
+          [xml]$x = Get-Content $vcx.FullName
+          $configs = @($x.Project.ItemGroup.ProjectConfiguration | ForEach-Object { $_.Include })
+          Write-Host "Configurations available: $($configs -join ', ')"
+
+          $cfg = $configs | Where-Object { $_ -eq 'Release|Win32' } | Select-Object -First 1
+          if (-not $cfg) { $cfg = $configs | Where-Object { $_ -like 'Release*|Win32' } | Select-Object -First 1 }
+          if (-not $cfg) { throw "No Release|Win32 configuration found. Available: $($configs -join ', ')" }
+          $conf, $plat = $cfg -split '\|'
+          Write-Host "Building $($vcx.FullName) as $conf / $plat"
+
+          msbuild $vcx.FullName "/p:Configuration=$conf" "/p:Platform=$plat" /p:PlatformToolset=v143 /m
           if ($LASTEXITCODE -ne 0) { throw "plugin-sdk library build failed" }
+
           Write-Host "Libraries now in plugin-sdk\output\lib:"
-          Get-ChildItem plugin-sdk\output\lib -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.Name }
+          Get-ChildItem "$sdk\output\lib" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.Name }
 
       - name: Build WeaponIconsTXD
         shell: pwsh
