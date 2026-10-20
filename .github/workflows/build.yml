@@ -104,6 +104,16 @@ jobs:
           Write-Host "Libraries now in plugin-sdk\output\lib:"
           Get-ChildItem "$sdk\output\lib" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.Name }
 
+      - name: Show the RenderWare helpers this SDK offers (for troubleshooting)
+        shell: pwsh
+        run: |
+          $gameDir = "$env:GITHUB_WORKSPACE\plugin-sdk\${{ matrix.sdkproject }}\${{ matrix.gamedir }}"
+          Write-Host "--- RenderWare.cpp lines about texture dictionaries and texture destroy"
+          Select-String -Path "$gameDir\RenderWare.cpp" -Pattern 'RwTexDictionaryGetCurrent|RwTextureDestroy|RwTexDictionaryFindNamedTexture' -ErrorAction SilentlyContinue |
+            Select-Object -First 12 | ForEach-Object { Write-Host $_.Line.Trim() }
+          Write-Host "--- TxdDef.h"
+          if (Test-Path "$gameDir\TxdDef.h") { Get-Content "$gameDir\TxdDef.h" | Select-Object -First 40 | ForEach-Object { Write-Host $_ } }
+
       - name: Build WeaponIconsTXD
         shell: pwsh
         run: |
