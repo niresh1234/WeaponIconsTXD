@@ -141,8 +141,11 @@ jobs:
           Write-Host "Extra include folders given to the compiler:"
           $dirs | ForEach-Object { Write-Host "  $_" }
 
-          # The CL variable is read by the compiler and adds these folders to every compile.
-          $env:CL = ($dirs | ForEach-Object { "/I`"$_`"" }) -join ' '
+          # The CL variable is read by the compiler and adds these options to every compile.
+          # RW (and the other two defines) are what the plugin-sdk library itself is built with.
+          # Without RW the RenderWare types (RwMatrix, RpClump ...) are never declared.
+          $env:CL = (($dirs | ForEach-Object { "/I`"$_`"" }) -join ' ') + ' /DRW /D_DX9_SDK_INSTALLED /D_SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING'
+          Write-Host "Compiler extra options: $env:CL"
 
           $out = "$env:GITHUB_WORKSPACE/out/"
           msbuild WeaponIconsTXD/WeaponIconsTXD.vcxproj "/p:Configuration=${{ matrix.config }}" /p:Platform=Win32 /p:PlatformToolset=v143 "/p:OutDir=$out"
