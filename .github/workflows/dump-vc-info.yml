@@ -1,8 +1,10 @@
 name: Dump Vice City SDK info
 
-# Run this by hand from the Actions tab. It builds nothing; it only copies
-# some plugin-sdk Vice City header files into one text file you can download.
+# Runs by itself when you commit this file (and can also be started by hand).
+# It builds nothing; it only copies some plugin-sdk Vice City header files
+# into one text file you can download.
 on:
+  push:
   workflow_dispatch:
 
 jobs:
