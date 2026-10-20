@@ -15,9 +15,11 @@ jobs:
           - game: SA
             config: GTASA Release
             sdkproject: plugin_sa
+            gamedir: game_sa
           - game: VC
             config: GTAVC Release
             sdkproject: plugin_vc
+            gamedir: game_vc
 
     env:
       PLUGIN_SDK_DIR: ${{ github.workspace }}\plugin-sdk
@@ -105,6 +107,43 @@ jobs:
       - name: Build WeaponIconsTXD
         shell: pwsh
         run: |
+          $sdk      = "$env:GITHUB_WORKSPACE\plugin-sdk"
+          $gameDir  = "$sdk\${{ matrix.sdkproject }}\${{ matrix.gamedir }}"
+          $dirs     = New-Object System.Collections.Generic.List[string]
+
+          # A. Copy the include folders that the freshly built plugin-sdk library itself uses.
+          #    (Your project file lists an older plugin-sdk folder layout.)
+          $vcx = Get-ChildItem $sdk -Recurse -Filter "${{ matrix.sdkproject }}.vcxproj" | Select-Object -First 1
+          if ($vcx) {
+            $vcxDir = $vcx.DirectoryName
+            $text   = Get-Content $vcx.FullName -Raw
+            foreach ($m in [regex]::Matches($text, '<AdditionalIncludeDirectories>(.*?)</AdditionalIncludeDirectories>')) {
+              foreach ($p in ($m.Groups[1].Value -split ';')) {
+                if (-not $p -or $p -like '*%(*') { continue }
+                $q = $p.Replace('$(ProjectDir)', "$vcxDir\").Replace('$(SolutionDir)', "$sdk\").Replace('$(PLUGIN_SDK_DIR)', $sdk)
+                if ($q -like '*$(*') { continue }
+                if (-not [System.IO.Path]::IsPathRooted($q)) { $q = Join-Path $vcxDir $q }
+                $q = [System.IO.Path]::GetFullPath($q).TrimEnd('\')
+                if ((Test-Path $q) -and -not $dirs.Contains($q)) { $dirs.Add($q) }
+              }
+            }
+            Write-Host "Defines used by the library project (for troubleshooting):"
+            [regex]::Matches($text, '<PreprocessorDefinitions>(.*?)</PreprocessorDefinitions>') |
+              ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique | ForEach-Object { Write-Host "  $_" }
+          }
+
+          # B. Folders the plugin-sdk wiki says a plugin needs (rw and enums)
+          foreach ($name in 'rw', 'enums') {
+            $d = Join-Path $gameDir $name
+            if ((Test-Path $d) -and -not $dirs.Contains($d)) { $dirs.Add($d) }
+          }
+
+          Write-Host "Extra include folders given to the compiler:"
+          $dirs | ForEach-Object { Write-Host "  $_" }
+
+          # The CL variable is read by the compiler and adds these folders to every compile.
+          $env:CL = ($dirs | ForEach-Object { "/I`"$_`"" }) -join ' '
+
           $out = "$env:GITHUB_WORKSPACE/out/"
           msbuild WeaponIconsTXD/WeaponIconsTXD.vcxproj "/p:Configuration=${{ matrix.config }}" /p:Platform=Win32 /p:PlatformToolset=v143 "/p:OutDir=$out"
           if ($LASTEXITCODE -ne 0) { throw "WeaponIconsTXD build failed" }
